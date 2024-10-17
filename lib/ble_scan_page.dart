@@ -1,14 +1,22 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class BleScanPage extends StatefulWidget {
+  final Function(DiscoveredDevice) onDeviceSelected;
+
+  BleScanPage({required this.onDeviceSelected});
+
   @override
   _BleScanPageState createState() => _BleScanPageState();
 }
 
 class _BleScanPageState extends State<BleScanPage> {
-  final List<ScanResult> _scanResults = [];
+  final FlutterReactiveBle _ble = FlutterReactiveBle();
+  final List<DiscoveredDevice> _scanResults = [];
+  bool _isScanning = false;
+  StreamSubscription? _scanSubscription;
 
   @override
   void initState() {
@@ -34,49 +42,95 @@ class _BleScanPageState extends State<BleScanPage> {
     if (await Permission.location.isGranted &&
         await Permission.bluetoothScan.isGranted &&
         await Permission.bluetoothConnect.isGranted) {
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
-      FlutterBluePlus.scanResults.listen((results) {
-        setState(() {
-          _scanResults.clear();
-          _scanResults.addAll(results);
-        });
-      }).onError((error) {
-        print('Erro ao escanear dispositivos: $error');
-      });
+      _startScan();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Permissões necessárias não concedidas.')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Permissões necessárias não concedidas.')),
+        );
+      }
     }
   }
 
-  Future<void> _connectToDevice(BluetoothDevice device) async {
-    try {
-      await FlutterBluePlus.stopScan();
+  void _startScan() {
+    if (_isScanning) return;
 
-      final bluetoothState = await FlutterBluePlus.state.first;
-      if (bluetoothState != BluetoothState.on) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Bluetooth não está ativado.')),
-        );
-        return;
+    setState(() {
+      _isScanning = true;
+      _scanResults.clear();
+    });
+
+    _scanSubscription = _ble.scanForDevices(
+      withServices: [], 
+      scanMode: ScanMode.lowLatency,
+    ).listen((device) {
+      if (_scanResults.every((element) => element.id != device.id)) {
+        if (mounted) {
+          setState(() {
+            _scanResults.add(device);
+          });
+        }
       }
+    }, onError: (error) {
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+      }
+      print('Erro durante o escaneamento: $error');
+    }, onDone: () {
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+      }
+    });
+  }
 
-      await device.connect(timeout: const Duration(seconds: 15));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Conectado ao dispositivo ${device.name}')),
-      );
+  void _stopScan() {
+    _scanSubscription?.cancel();
+    setState(() {
+      _isScanning = false;
+    });
+  }
+
+  Future<void> _connectToDevice(DiscoveredDevice device) async {
+    _stopScan();
+    try {
+      _ble
+          .connectToDevice(
+        id: device.id,
+        connectionTimeout: const Duration(seconds: 10),
+      )
+          .listen((connectionState) {
+        if (connectionState.connectionState ==
+            DeviceConnectionState.connected) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Conectado a ${device.name}')),
+            );
+          }
+        }
+      }, onError: (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao conectar: $error')),
+          );
+        }
+      });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha ao conectar ao dispositivo: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao conectar ao dispositivo: $e')),
+        );
+      }
       print('Erro ao conectar ao dispositivo: $e');
     }
   }
 
   @override
   void dispose() {
-    FlutterBluePlus.stopScan();
+    _scanSubscription?.cancel();
     super.dispose();
   }
 
@@ -85,27 +139,34 @@ class _BleScanPageState extends State<BleScanPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dispositivos BLE Disponíveis'),
+        actions: [
+          _isScanning
+              ? IconButton(icon: Icon(Icons.stop), onPressed: _stopScan)
+              : IconButton(icon: Icon(Icons.search), onPressed: _startScan),
+        ],
       ),
       body: Column(
         children: [
-          Expanded(
-            child: ListView.builder(
-              itemCount: _scanResults.length,
-              itemBuilder: (context, index) {
-                final result = _scanResults[index];
-                return ListTile(
-                  title: Text(result.device.name.isNotEmpty
-                      ? result.device.name
-                      : 'Desconhecido'),
-                  subtitle: Text(result.device.id.toString()),
-                  trailing: Text('${result.rssi} dBm'),
-                  onTap: () {
-                    _connectToDevice(result.device);
-                  },
-                );
-              },
-            ),
-          ),
+          _isScanning
+              ? Center(child: CircularProgressIndicator())
+              : Expanded(
+                  child: ListView.builder(
+                    itemCount: _scanResults.length,
+                    itemBuilder: (context, index) {
+                      final result = _scanResults[index];
+                      return ListTile(
+                        title: Text(result.name.isNotEmpty
+                            ? result.name
+                            : 'Desconhecido'),
+                        subtitle: Text(result.id),
+                        onTap: () {
+                          widget.onDeviceSelected(
+                              result); 
+                        },
+                      );
+                    },
+                  ),
+                ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
