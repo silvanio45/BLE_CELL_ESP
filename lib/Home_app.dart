@@ -81,7 +81,7 @@ class HomeAppState extends State<HomeApp> {
         children: [
           ElevatedButton(
             onPressed: () {
-              _stopScan(); // Parar o scan antes de navegar
+              _stopScan();
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -152,27 +152,37 @@ class HomeAppState extends State<HomeApp> {
       connectionTimeout: const Duration(seconds: 10),
     );
 
-    _connectionStream.listen((event) {
+    _connectionStream.listen((event) async {
       if (event.connectionState == DeviceConnectionState.connected) {
-        if (!mounted) return; // Verifique se ainda está montado
+        if (!mounted) return; 
         setState(() {
           _isConnected = true;
         });
 
-        // Define a característica de transmissão (TX)
+        try {
+          final mtuResult = await _ble.requestMtu(
+            deviceId: device.id,
+            mtu: 512,
+          );
+          print("MTU ajustado para: $mtuResult");
+        } catch (e) {
+          print("Erro ao ajustar o MTU: $e");
+        }
+
         _txCharacteristic = QualifiedCharacteristic(
-          serviceId: Uuid.parse("service-uuid"), // Substitua pelo UUID correto
-          characteristicId:
-              Uuid.parse("characteristic-uuid"), // Substitua pelo UUID correto
+          serviceId: Uuid.parse(
+              "f3aa0d0e-1ec1-4b6f-b7b3-4d49a5fefe89"),
+          characteristicId: Uuid.parse(
+              "d5382a13-c315-414c-b252-9cdb1e944e51"),
           deviceId: device.id,
         );
 
-        if (!mounted) return; // Verifique se ainda está montado
+        if (!mounted) return; 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Dispositivo conectado')),
         );
       } else if (event.connectionState == DeviceConnectionState.disconnected) {
-        if (!mounted) return; // Verifique se ainda está montado
+        if (!mounted) return; 
         setState(() {
           _isConnected = false;
         });
@@ -181,23 +191,21 @@ class HomeAppState extends State<HomeApp> {
         );
       }
     }, onError: (error) {
-      if (!mounted) return; // Verifique se ainda está montado
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro na conexão: $error')),
       );
     });
   }
 
-  // Função para gerar um JSON fictício com o tamanho especificado
   String _generateDummyJson(int sizeInBytes) {
     String data = '';
     while (data.length < sizeInBytes) {
-      data += 'A'; // Simplesmente preenche o JSON com a letra "A"
+      data += 'A'; 
     }
-    return '{"data": "$data"}'; // Formato JSON
+    return '{"data": "$data"}';
   }
 
-  // Função para enviar o JSON em chunks
   Future<void> _sendJsonInChunks(String jsonData, int chunkSize) async {
     int totalBytes = jsonData.length;
     int offset = 0;
@@ -207,28 +215,25 @@ class HomeAppState extends State<HomeApp> {
           (offset + chunkSize > totalBytes) ? totalBytes : offset + chunkSize;
       String chunk = jsonData.substring(offset, end);
 
-      // Envia o chunk via BLE
-      await _ble.writeCharacteristicWithResponse(_txCharacteristic,
-          value: chunk.codeUnits);
-
-      // Simular atraso de envio BLE
-      await Future.delayed(Duration(milliseconds: 100));
-
+      await _ble.writeCharacteristicWithoutResponse(
+        _txCharacteristic,
+        value: chunk.codeUnits,
+      );
+      Future.delayed(Duration(milliseconds: 1));
       offset = end;
     }
 
-    if (!mounted) return; // Verifique se ainda está montado
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Envio completo!')),
     );
   }
 
   void _stopScan() {
-    // Implementar a lógica para parar o scan, se necessário
+
   }
 }
 
-// Switch para alternar o tema
 class CustomSw extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
